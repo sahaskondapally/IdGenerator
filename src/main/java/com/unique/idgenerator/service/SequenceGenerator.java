@@ -1,5 +1,7 @@
 package com.unique.idgenerator.service;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 import org.springframework.stereotype.Component;
 
 import com.unique.idgenerator.util.IdFormatter;
@@ -11,47 +13,62 @@ import lombok.extern.log4j.Log4j2;
 @Component
 @Log4j2
 public class SequenceGenerator {
-
-	private static final int SEQUENCE_BITS = 12;
-	private static final int UNUSED_BITS = 22;
-
-	private static final int maxSequence = (int) (Math.pow(2, SEQUENCE_BITS) - 1);
-
-	private volatile long lastTimestamp = -1L;
-	private volatile long sequence = 0L;
-
-	private final NodeIdentifier nodeIdentifier;
 	private final TimeUtil timeUtil;
 	private final IdFormatter idFormatter;
+	private final AtomicLong sequence = new AtomicLong(0);
+	private final AtomicLong lastTimestamp = new AtomicLong(-1);
 
-	public SequenceGenerator(NodeIdentifier nodeIdentifier, TimeUtil timeUtil, IdFormatter idFormatter) {
-		this.nodeIdentifier = nodeIdentifier;
+	private final int nodeId; 
+	private static final int SEQUENCE_BITS = 12; // Example value, adjust as necessary
+	private static final long maxSequence = (1L << SEQUENCE_BITS) - 1;
+
+	public SequenceGenerator(TimeUtil timeUtil, IdFormatter idFormatter) {
 		this.timeUtil = timeUtil;
 		this.idFormatter = idFormatter;
+		this.nodeId = NodeIdentifier.generateNodeId(); 
+
+		log.info("SequenceGenerator initialized with nodeId: {}", nodeId);
 	}
 
-	public synchronized String nextId() {
-		int nodeId = nodeIdentifier.generateNodeId();
+	public String nextId() {
 		long currentTimestamp = timeUtil.getCurrentTimestamp();
+		long lastTime = lastTimestamp.get();
 
-		if (currentTimestamp < lastTimestamp) {
-			throw new IllegalStateException("Invalid System Clock!");
-		}
+		log.debug("Generating next ID. Current timestamp: {}, Last timestamp: {}", currentTimestamp, lastTime);
 
-		if (currentTimestamp == lastTimestamp) {
-			sequence = (sequence + 1) & maxSequence;
-			if (sequence == 0) {
-				currentTimestamp = timeUtil.waitForNextMillis(lastTimestamp);
+		// If the current timestamp is the same as the last one, increment the sequence
+		if (currentTimestamp == lastTime) {
+			long currentSequence = sequence.incrementAndGet() & maxSequence;
+
+			log.debug("Same timestamp detected. Current sequence: {}", currentSequence);
+
+			// If the sequence reaches its maximum, wait for the next millisecond
+			if (currentSequence == 0) {
+				log.info("Sequence exhausted, waiting for next millisecond...");
+				currentTimestamp = timeUtil.waitForNextMillis(lastTime);
+				log.info("Wait complete. New timestamp: {}", currentTimestamp);
 			}
-		} else {
-			sequence = 0;
+
+			lastTimestamp.set(currentTimestamp);
+			String id = generateId(currentTimestamp, currentSequence);
+			log.info("Generated ID: {}", id);
+			return id;
 		}
 
-		lastTimestamp = currentTimestamp;
+		// If the current timestamp is different from the last one, reset the sequence
+		log.debug("New timestamp detected. Resetting sequence.");
+		sequence.set(0);
+		lastTimestamp.set(currentTimestamp);
+		return generateId(currentTimestamp, 0);
 
-		long idHigh = currentTimestamp;
+	}
+
+	private String generateId(long timestamp, long sequence) {
+		long idHigh = timestamp;
 		long idLow = (nodeId << SEQUENCE_BITS) | sequence;
+		String formattedId = idFormatter.formatId(idLow, idHigh);
+		log.debug("Formatted ID: {}", formattedId);
+		return formattedId;
 
-		return idFormatter.formatId(idLow, idHigh);
 	}
 }
