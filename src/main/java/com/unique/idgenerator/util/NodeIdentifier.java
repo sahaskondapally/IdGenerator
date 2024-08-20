@@ -1,10 +1,9 @@
 package com.unique.idgenerator.util;
 
-import lombok.extern.log4j.Log4j2;
-import org.springframework.stereotype.Component;
-
 import java.net.NetworkInterface;
 import java.util.Enumeration;
+
+import lombok.extern.log4j.Log4j2;
 
 @Log4j2
 public class NodeIdentifier {
